@@ -37,6 +37,73 @@ except ImportError as e:
     print("Instale com: pip install rich openai")
     sys.exit(1)
 
+# ==================== FILE TOOLS ====================
+
+def write_file(path, content):
+    """
+    Escreve/sobrescreve arquivo com conteúdo.
+    Retorna (sucesso, mensagem).
+    """
+    try:
+        # Garante que o diretório existe
+        dir_path = os.path.dirname(path)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        return True, f"Arquivo '{path}' salvo com sucesso ({len(content)} chars)"
+    except IOError as e:
+        return False, f"Erro ao escrever arquivo: {e}"
+
+def patch_file(path, search_text, replace_text):
+    """
+    Edição cirúrgica: substitui search_text por replace_text.
+    Retorna (sucesso, mensagem).
+    """
+    if not os.path.exists(path):
+        return False, f"Arquivo '{path}' não encontrado."
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            original = f.read()
+
+        if search_text not in original:
+            return False, "Texto de busca não encontrado no arquivo."
+
+        modified = original.replace(search_text, replace_text, 1)  # Apenas primeira ocorrência
+
+        if modified == original:
+            return False, "Nenhuma alteração realizada."
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(modified)
+
+        return True, f"Arquivo '{path}' patchado com sucesso"
+
+    except IOError as e:
+        return False, f"Erro ao patchar arquivo: {e}"
+
+def read_file_tool(path):
+    """
+    Lê arquivo para contexto dinâmico (usado pela IA).
+    Retorna (sucesso, conteudo ou erro).
+    """
+    if not os.path.exists(path):
+        return False, f"Arquivo '{path}' não encontrado."
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        if len(content) > 10000:
+            content = content[:10000] + "\n... (truncado)"
+
+        return True, content
+    except IOError as e:
+        return False, f"Erro ao ler arquivo: {e}"
+
 # ==================== COMMAND LINE ARGS ====================
 WORK_DIR = os.getcwd()  # Default: current directory
 WORK_DIR_CONTEXT = ""  # Will store initial file context
@@ -1712,6 +1779,55 @@ def process_command(input_text):
 
 # Bloco 7 concluído: Command Handler (39 commands)
 
+def check_file_operations(response):
+    """
+    Verifica se a resposta da IA contém WRITE_FILE ou PATCH_FILE.
+    Se encontrar, pede confirmação do usuário antes de aplicar.
+    """
+    # Check for WRITE_FILE
+    if "WRITE_FILE:" in response:
+        # Parse WRITE_FILE block
+        import re
+        pattern = r'WRITE_FILE:\s*(\S+)\s*```(?:[\w+]*)\n(.*?)```'
+        matches = re.findall(pattern, response, re.DOTALL)
+
+        for path, content in matches:
+            path = path.strip()
+            console.print()
+            console.print(f"[bold yellow]IA quer escrever arquivo:[/bold yellow] {path}")
+            console.print(f"[dim]{len(content)} caracteres[/dim]")
+
+            if Confirm.ask("Deseja aplicar esta alteração?", default=True):
+                full_path = os.path.join(WORK_DIR, path) if not os.path.isabs(path) else path
+                sucesso, msg = write_file(full_path, content)
+                if sucesso:
+                    console.print(f"[green]✓ {msg}[/green]")
+                else:
+                    console.print(f"[red]Erro: {msg}[/red]")
+            else:
+                console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+
+    # Check for PATCH_FILE
+    if "PATCH_FILE:" in response:
+        pattern = r'PATCH_FILE:\s*(\S+)\s*SEARCH:\s*(.*?)\s*REPLACE:\s*(.*?)(?=PATCH_FILE:|WRITE_FILE:|$)'
+        matches = re.findall(pattern, response, re.DOTALL)
+
+        for path, search_text, replace_text in matches:
+            path = path.strip()
+            console.print()
+            console.print(f"[bold yellow]IA quer patchar arquivo:[/bold yellow] {path}")
+            console.print(f"[dim]Busca: {search_text[:50]}...[/dim]")
+
+            if Confirm.ask("Deseja aplicar esta alteração?", default=True):
+                full_path = os.path.join(WORK_DIR, path) if not os.path.isabs(path) else path
+                sucesso, msg = patch_file(full_path, search_text.strip(), replace_text.strip())
+                if sucesso:
+                    console.print(f"[green]✓ {msg}[/green]")
+                else:
+                    console.print(f"[red]Erro: {msg}[/red]")
+            else:
+                console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+
 # ==================== MAIN LOOP (REPL) ====================
 
 def main():
@@ -1732,17 +1848,54 @@ def main():
         scanned = bool(WORK_DIR_CONTEXT)
 
     # Limpa tela e mostra cabeçalho
-    clear_and_show_header()
+    ansi_clear_screen()
+
+    # Banner ASCII Art (Blocky style with █)
+    banner = """
+\033[1;96m
+██╗     ███╗██████╗  ██████╗ ██████╗     ██████╗  ██████╗ ██████╗███████╗
+██║     ███║██╔════╝ ██╔═══╝ ██╔══██╗    ██╔══██╗██╔═══██╗██╔══██║██╔════╝
+██║     ██╔╝█████╗  ██║     ██████╔╝    ██████╔╝██║   ██║███████╗█████╗
+██║     ██║ ██╔══╝  ██║     ██╔══██╗    ██╔══██╗██║   ██║╚════██║██╔══╝
+███████╗██║ ███████╗╚██████╗██║  ██║    ██████╔╝╚██████╔╝███████║███████╗
+╚══════╝╚═╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚══════╝
+\033[0m
+\033[96m       IA Oficial da AmpliDEV — Divisão de Software da AmpliGroup\033[0m
+"""
+    sys.stdout.write(banner)
+    sys.stdout.flush()
+
     show_welcome_banner()
 
-    # Inject work dir context as system message if scanned
+    # Inject work dir context as system message
     if scanned:
         system_msg = f"""You are AmpliCode, an AI Programming Assistant developed by AmpliDEV (AmpliGroup).
-You have access to the following project files from: {WORK_DIR}
+You have tools to read, write and edit files in the current working directory.
+Use them to solve programming tasks efficiently.
+
+Available tools (you can request the user to execute these):
+- write_file(path, content): Create or overwrite a file
+- patch_file(path, search_text, replace_text): Surgical edit (replace specific text, avoid rewriting entire file)
+- read_file(path): Read a specific file when you need more details (use this instead of loading all files at once)
+
+Project files from: {WORK_DIR}
 
 {WORK_DIR_CONTEXT}
 
-Use this context to help answer questions about the project. Refer to these files when relevant."""
+When asked to create or modify code, output the request in this format:
+WRITE_FILE: path/to/file.py
+```
+file content here
+```
+
+or
+
+PATCH_FILE: path/to/file.py
+SEARCH: exact text to find
+REPLACE: new text to replace with
+
+The user will confirm before applying any changes.
+Use read_file to dynamically request specific files when needed - this keeps context light and response fast on Core 2 Duo hardware."""
         conversation_history.append({"role": "system", "content": system_msg})
         console.print(f"[dim]Contexto inicial injetado: {len(WORK_DIR_FILES)} arquivos ({len(WORK_DIR_CONTEXT)} chars)[/dim]")
 
@@ -1787,7 +1940,10 @@ Use this context to help answer questions about the project. Refer to these file
 
         if response:
             # Mensagem já foi exibida via streaming
-            conversation_history.append({"role": "assistant", "content": response})
+            conversation_history.append({"role": "assitant", "content": response})
+
+            # Verifica se a IA quer escrever/patchar arquivo
+            check_file_operations(response)
 
             # Verifica se precisa compactar
             auto_compact_if_needed()

@@ -116,6 +116,20 @@ Quando iniciado com `amplicode .`, o diretório atual é mapeado como contexto d
 
 ## Recursos de IA
 
+### Ferramentas de Edição (Superpowers)
+O AmpliCode agora possui capacidade de **ler, escrever e editar arquivos** no diretório de trabalho:
+
+**Comandos de Arquivo:**
+- **Write File**: IA pode criar/sobrescrever arquivos
+- **Patch File**: Edição cirúrgica (substitui trecho específico, evita reescrever arquivo inteiro)
+- **Read File**: Lê arquivo específico sob demanda (contexto dinâmico)
+
+**Segurança:**
+- Sempre que a IA tentar escrever/patchar um arquivo, o terminal exibe: *"Deseja aplicar esta alteração? (s/n)"*
+- O usuário tem controle total sobre o que é modificado
+
+### Session Persistence
+
 ### Session Persistence
 O AmpliCode permite salvar e retomar sessões completas:
 
