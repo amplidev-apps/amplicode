@@ -21,6 +21,21 @@ import time
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import List, Dict, Optional, Any
+
+# Rich imports (verificadas na inicialização)
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.box import ROUNDED, SIMPLE
+    from rich.prompt import Prompt, Confirm
+    from rich.text import Text
+    import openai
+except ImportError as e:
+    print(f"Erro: Dependência faltando: {e}")
+    print("Instale com: pip install rich openai")
+    sys.exit(1)
 
 # ==================== COMMAND LINE ARGS ====================
 WORK_DIR = os.getcwd()  # Default: current directory
@@ -56,19 +71,6 @@ def parse_args():
 
 # Chama parse_args imediatamente após imports
 parse_args()
-
-# Dependências externas (verificadas na inicialização)
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.box import ROUNDED, SIMPLE
-    from rich.prompt import Prompt, Confirm
-    import openai
-except ImportError as e:
-    print(f"Erro: Dependência faltando: {e}")
-    print("Instale com: pip install rich openai")
-    sys.exit(1)
 
 # ==================== CONSTANTS ====================
 CONFIG_PATH = os.path.expanduser("~/.amplicode_config.json")
@@ -379,16 +381,6 @@ def render_user_message(content):
     sys.stdout.write(output)
     sys.stdout.flush()
 
-def render_assitant_message_start():
-    """Inicia mensagem da IA (prefixo 'AmpliCode' em verde) - uma única escrita"""
-    sys.stdout.write("\033[1;92m  AmpliCode \033[0m")
-    sys.stdout.flush()
-
-def render_assistant_message_start():
-    """Inicia mensagem da IA (prefixo 'AmpliCode' em verde)"""
-    sys.stdout.write(COLOR_BOLD_GREEN + "  AmpliCode " + COLOR_RESET)
-    sys.stdout.flush()
-
 def stream_token(token):
     """
     Escreve token diretamente no stdout (Core 2 Duo optimized).
@@ -442,9 +434,9 @@ def show_welcome_banner():
     model_name = config.get("current_model", "nenhum selecionado")
 
     console.print()
-    console.print(Text("AmpliCode v" + AMPLI_VERSION + " — IA Oficial da AmpliDEV", style="bold cyan"))
-    console.print(Text(f"Modelo: {model_name}", style="dim"))
-    console.print(Text("Digite /help para comandos ou sua pergunta abaixo.", style="dim"))
+    console.print(f"[bold cyan]AmpliCode v{AMPLI_VERSION} — IA Oficial da AmpliDEV[/bold cyan]")
+    console.print(f"[dim]Modelo: {model_name}[/dim]")
+    console.print("[dim]Digite /help para comandos ou sua pergunta abaixo.[/dim]")
     render_separator()
 
 # Bloco 2 concluído: ANSI Terminal UI Helpers
