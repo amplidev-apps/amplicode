@@ -39,6 +39,71 @@ except ImportError as e:
 
 # ==================== COMMAND LINE ARGS ====================
 WORK_DIR = os.getcwd()  # Default: current directory
+WORK_DIR_CONTEXT = ""  # Will store initial file context
+WORK_DIR_FILES = []  # List of files found
+
+# Diretórios e arquivos a ignorar
+IGNORE_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv',
+                'dist', 'build', '.idea', '.vscode', '__MACOSX'}
+IGNORE_EXTENSIONS = {'.pyc', '.pyo', '.so', '.o', '.class', '.jar',
+                  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico',
+                  '.mp3', '.mp4', '.avi', '.mov', '.pdf', '.zip',
+                  '.tar', '.gz', '.rar', '.7z', '.exe', '.dll'}
+
+def scan_work_dir(max_chars=40000):
+    """
+    Lê arquivos de texto do WORK_DIR para contexto inicial.
+    Limita a ~10k tokens (40k chars) para não estourar contexto.
+    Ignora pastas pesadas e arquivos binários.
+    """
+    global WORK_DIR_CONTEXT, WORK_DIR_FILES
+
+    if not os.path.isdir(WORK_DIR):
+        return False
+
+    files_content = []
+    total_chars = 0
+
+    for root, dirs, files in os.walk(WORK_DIR):
+        # Remove ignored dirs (modifies dirs in-place for os.walk)
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+        for file in files:
+            if total_chars >= max_chars:
+                break
+
+            ext = os.path.splitext(file)[1].lower()
+            if ext in IGNORE_EXTENSIONS:
+                continue
+
+            file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, WORK_DIR)
+
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+
+                # Limita conteudo por arquivo (max 5000 chars)
+                if len(content) > 5000:
+                    content = content[:5000] + "\n... (truncated)"
+
+                if content.strip():  # Só adiciona se não vazio
+                    files_content.append(f"=== Arquivo: {rel_path} ===\n{content}")
+                    WORK_DIR_FILES.append(rel_path)
+                    total_chars += len(content)
+
+            except (IOError, UnicodeDecodeError):
+                # Ignora arquivos que não conseguir ler
+                continue
+
+        if total_chars >= max_chars:
+            break
+
+    if files_content:
+        WORK_DIR_CONTEXT = "\n\n".join(files_content)
+        return True
+    return False
+
 
 def parse_args():
     """Processa argumentos de linha de comando"""
@@ -1660,9 +1725,26 @@ def main():
     # Verifica configuração
     ensure_config()
 
+    # Scan work directory if WORK_DIR is set
+    scanned = False
+    if WORK_DIR and os.path.isdir(WORK_DIR):
+        scan_work_dir()
+        scanned = bool(WORK_DIR_CONTEXT)
+
     # Limpa tela e mostra cabeçalho
     clear_and_show_header()
     show_welcome_banner()
+
+    # Inject work dir context as system message if scanned
+    if scanned:
+        system_msg = f"""You are AmpliCode, an AI Programming Assistant developed by AmpliDEV (AmpliGroup).
+You have access to the following project files from: {WORK_DIR}
+
+{WORK_DIR_CONTEXT}
+
+Use this context to help answer questions about the project. Refer to these files when relevant."""
+        conversation_history.append({"role": "system", "content": system_msg})
+        console.print(f"[dim]Contexto inicial injetado: {len(WORK_DIR_FILES)} arquivos ({len(WORK_DIR_CONTEXT)} chars)[/dim]")
 
     config = load_config()
     current_model = config.get("current_model", "não selecionado")
