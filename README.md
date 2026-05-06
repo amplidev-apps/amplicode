@@ -27,11 +27,8 @@ pip install rich openai
 
 ### Download e Configuração
 ```bash
-# Baixe o arquivo ia_terminal.py
-curl -O https://raw.githubusercontent.com/amplidev-apps/amplicode/main/ia_terminal.py
-
-# Ou clone o repositório
-git clone git@github.com:amplidev-apps/amplicode.git
+# Clone o repositório
+git clone https://github.com/amplidev-apps/amplicode.git
 cd amplicode
 
 # Torne executável (opcional)
@@ -40,6 +37,18 @@ chmod +x ia_terminal.py
 # Crie um alias (recomendado)
 echo "alias amplicode='python3 $(pwd)/ia_terminal.py'" >> ~/.bashrc
 source ~/.bashrc
+```
+
+### Uso Rápido
+```bash
+# Inicia no diretório atual (mapeia como contexto de trabalho)
+amplicode .
+
+# Inicia em um diretório específico
+amplicode /caminho/para/projeto
+
+# Inicia sem contexto de diretório
+amplicode
 ```
 
 ## Primeiro Uso
@@ -76,6 +85,34 @@ amplicode
 | `/pr [title]` | Criar Pull Request com IA |
 | `/help` | Listar todos os 39 comandos |
 | `/quit` | Sair do AmpliCode |
+
+## Novidades da v1.0.0
+
+### 🚀 Argumentos de Linha de Comando
+Agora o AmpliCode aceita argumentos na inicialização:
+
+```bash
+# Mapeia diretório atual como contexto de trabalho
+amplicode .
+
+# Mapeia diretório específico
+amplicode /caminho/para/projeto
+
+# Mostra ajuda
+amplicode --help
+
+# Mostra versão
+amplicode --version
+```
+
+### ⚡ Otimização Core 2 Duo (ANSI Fluido)
+- Streaming direto via `sys.stdout.write()` + `flush()` (zero buffer)
+- Cabeçalho renderizado em uma única operação de escrita
+- Mensagens com bordas ANSI pré-processadas (mínimo de syscalls)
+- Sem threads para UI, sem Rich Live (economia de CPU e memória)
+
+### 📂 Mapeamento de Contexto
+Quando iniciado com `amplicode .`, o diretório atual é mapeado como contexto de trabalho, permitindo que o AmpliCode acesse arquivos locais mais rápido para análise de código.
 
 ## Recursos de IA
 
