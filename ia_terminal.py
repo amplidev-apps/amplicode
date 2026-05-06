@@ -1850,19 +1850,13 @@ def main():
     # Limpa tela e mostra cabeçalho
     ansi_clear_screen()
 
-    # Banner ASCII Art: 
-█████╗  ███╗   ███╗██████╗ ██╗     ██╗     ██████╗ ██████╗ ██████╗ ███████╗
-██╔══██╗████╗ ████║██╔══██╗██║     ██║    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-███████║██╔████╔██║██████╔╝██║     ██║    ██║     ██║   ██║██║  ██║█████╗  
-██╔══██║██║╚██╔╝██║██╔═══╝ ██║     ██║    ██║     ██║   ██║██║  ██║██╔══╝  
-██║  ██║██║ ╚═╝ ██║██║     ███████╗██║    ╚██████╗╚██████╔╝██████╔╝███████╗
-╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚══════╝╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-    banner = """
-\033[1;96m]
-COLE A SPLASH AQUI
-\033[0m]
-\033[96m       IA Oficial da AmpliDEV — Divisão de Software da AmpliGroup\033[0m]
-"""
+    # Banner: AMPLI CODE (clean text only)
+    banner = (
+        "\033[1;96m\n"
+        "  A   M   P   L   I     C   O   D   E  \n"
+        "\033[0m"
+        "\033[96m       IA Oficial da AmpliDEV — Divisão de Software da AmpliGroup\033[0m\n"
+    )
     sys.stdout.write(banner)
     sys.stdout.flush()
 
