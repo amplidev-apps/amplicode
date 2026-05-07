@@ -104,6 +104,33 @@ def read_file_tool(path):
     except IOError as e:
         return False, f"Erro ao ler arquivo: {e}"
 
+def run_terminal_command(command):
+    """
+    Executa comando de shell com segurança.
+    Pede confirmação do usuário antes de executar.
+    Retorna (sucesso, saida ou erro).
+    """
+    console.print()
+    console.print(f"[bold yellow]IA quer executar:[/bold yellow] {command}")
+    
+    if not Confirm.ask("Deseja executar este comando?", default=True):
+        return False, "Comando cancelado pelo usuário."
+
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = ""
+        if result.stdout:
+            output += result.stdout
+        if result.stderr:
+            output += result.stderr
+        return True, output or "Comando executado (sem saída)."
+    except subprocess.TimeoutExpired:
+        return False, "Comando excedeu o tempo limite (30s)."
+    except Exception as e:
+        return False, f"Erro ao executar: {e}"
+
 # ==================== COMMAND LINE ARGS ====================
 WORK_DIR = os.getcwd()  # Default: current directory
 WORK_DIR_CONTEXT = ""  # Will store initial file context
@@ -1866,32 +1893,34 @@ def main():
     # Inject work dir context as system message
     if scanned:
         system_msg = f"""You are AmpliCode, an AI Programming Assistant developed by AmpliDEV (AmpliGroup).
-You have tools to read, write and edit files in the current working directory.
-Use them to solve programming tasks efficiently.
+You have FULL access to the working directory and terminal.
 
 Available tools (you can request the user to execute these):
 - write_file(path, content): Create or overwrite a file
-- patch_file(path, search_text, replace_text): Surgical edit (replace specific text, avoid rewriting entire file)
-- read_file(path): Read a specific file when you need more details (use this instead of loading all files at once)
+- patch_file(path, search_text, replace_text): Surgical edit (replace specific text)
+- read_file(path): Read a specific file when you need details
+- run_terminal_command(command): Execute shell commands (ls, mkdir, python3, etc.)
 
 Project files from: {WORK_DIR}
 
 {WORK_DIR_CONTEXT}
 
-When asked to create or modify code, output the request in this format:
+When asked to create/modify code, output in this format:
 WRITE_FILE: path/to/file.py
 ```
 file content here
 ```
 
-or
-
+or:
 PATCH_FILE: path/to/file.py
 SEARCH: exact text to find
-REPLACE: new text to replace with
+REPLACE: new text
 
-The user will confirm before applying any changes.
-Use read_file to dynamically request specific files when needed - this keeps context light and response fast on Core 2 Duo hardware."""
+Or request terminal execution:
+RUN_COMMAND: ls -la
+
+The user will confirm before applying any changes or executing commands.
+Use read_file to dynamically request files - keeps context light and fast on Core 2 Duo."""
         conversation_history.append({"role": "system", "content": system_msg})
         console.print(f"[dim]Contexto inicial injetado: {len(WORK_DIR_FILES)} arquivos ({len(WORK_DIR_CONTEXT)} chars)[/dim]")
 
@@ -1936,10 +1965,24 @@ Use read_file to dynamically request specific files when needed - this keeps con
 
         if response:
             # Mensagem já foi exibida via streaming
-            conversation_history.append({"role": "assitant", "content": response})
+            conversation_history.append({"role": "assistant", "content": response})
 
             # Verifica se a IA quer escrever/patchar arquivo
             check_file_operations(response)
+
+            # Verifica se a IA quer executar comando
+            if "RUN_COMMAND:" in response:
+                import re
+                pattern = r'RUN_COMMAND:\s*(.+)'
+                matches = re.findall(pattern, response)
+                for cmd in matches:
+                    cmd = cmd.strip()
+                    sucesso, output = run_terminal_command(cmd)
+                    if sucesso:
+                        console.print(f"[green]✓ Comando executado:[/green]")
+                        console.print(output[:500] if output else "(sem saída)")
+                    else:
+                        console.print(f"[red]Erro: {output}[/red]")
 
             # Verifica se precisa compactar
             auto_compact_if_needed()
