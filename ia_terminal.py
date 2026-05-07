@@ -892,7 +892,7 @@ COLOR_BOLD = "\033[1m"
 COLOR_DIM = "\033[2m"
 
 # Versão
-AMPLI_VERSION = "1.0.0"
+AMPLI_VERSION = "2.0.0"
 
 # ==================== GLOBAL STATE ====================
 console = Console()
@@ -1030,8 +1030,14 @@ def cmd_setup():
 
     # Valida formato do model_id
     if "/" not in model_id:
+        # Tenta adivinhar a organização
+        suggested = f"nvidia/{model_id}"
         console.print("[red]Formato inválido! Use: organizacao/modelo[/red]")
-        return
+        console.print(f"[dim]Sugestão: {suggested}[/dim]")
+        if Confirm.ask("Usar sugestão?", default=True):
+            model_id = suggested
+        else:
+            return
 
     # Testa a configuração
     console.print()
@@ -1066,6 +1072,31 @@ def cmd_setup():
             config["current_model"] = name
             save_config(config)
             console.print(f"[green]✓ Modelo atual alterado para '{name}'[/green]")
+
+def cmd_addmodel():
+    """Adicionar novo modelo (chama setup)"""
+    cmd_setup()
+
+def cmd_models():
+    """Listar e selecionar modelos"""
+    config = load_config()
+    if not config["models"]:
+        console.print("[yellow]Nenhum modelo configurado. Use /addmodel[/yellow]")
+        return
+
+    console.print("[dim]Modelos disponíveis:[/dim]")
+    for i, m in enumerate(config["models"]):
+        current = " [bold green]← atual[/bold green]" if m["name"] == config["current_model"] else ""
+        console.print(f"  {i+1}. {m['name']} ({m['model_id']}){current}")
+
+    if len(config["models"]) > 1:
+        choice = Prompt.ask("[bold]Selecionar modelo (número)[/bold]", default="")
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(config["models"]):
+                config["current_model"] = config["models"][idx]["name"]
+                save_config(config)
+                console.print(f"[green]✓ Modelo atual: {config['current_model']}[/green]")
 
 # Bloco 1 concluído: Imports + Config Manager
 
