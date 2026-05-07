@@ -1302,8 +1302,12 @@ def stream_response(client, model_id, messages, max_tokens=2048, temperature=0.7
         )
 
         for chunk in stream:
-            if chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
+            # Verifica se há choices no chunk
+            if not hasattr(chunk, 'choices') or not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta and hasattr(delta, 'content') and delta.content:
+                token = delta.content
                 stream_token(token)
                 full_response.append(token)
 
@@ -1355,6 +1359,12 @@ def send_to_nvidia(user_message, use_stream=True):
     try:
         client = create_nvidia_client(model_config["api_key"])
         model_id = model_config.get("model_id", "nvidia/llama-3.1-8b-instruct")
+
+        # Auto-corrige model_id sem organização
+        if "/" not in model_id:
+            model_id = f"nvidia/{model_id}"
+            console.print(f"[dim]Modelo auto-corrigido para: {model_id}[/dim]")
+
         config = load_config()
         settings = config.get("settings", {})
         max_tokens = settings.get("max_tokens", 2048)
