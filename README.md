@@ -2,7 +2,7 @@
 
 **IA Oficial da AmpliDEV — Divisão de Software da AmpliGroup**
 
-AmpliCode é um clone funcional e visualmente idêntico ao Open-Claude-Code, adaptado para o ecossistema NVIDIA e otimizado para hardware limitado (Core 2 Duo com Linux).
+AmpliCode é um clone funcional e visualmente idêntico ao Claude Code v2, adaptado para o ecossistema NVIDIA e otimizado para hardware limitado (Core 2 Duo com Linux).
 
 ## Diferenciais
 
@@ -17,6 +17,63 @@ Uso nativo da infraestrutura NVIDIA API para máxima velocidade de resposta. Sup
 
 ### 🧠 Workflow Superpowers
 Inclusão de comandos avançados de Git e gestão de sessões para criadores e desenvolvedores. Recursos de brainstorming, debugging e execução de planos embutidos nativamente.
+
+## Novidades da v2.0.0
+
+### 🔐 Permission System (6 Modos)
+Controle granular sobre execução de ferramentas:
+- `bypass`: Todos os comandos aprovados automaticamente
+- `acceptEdits`: Edições automáticas, outros pedem confirmação
+- `auto`: Comandos seguros automáticos, outros pedem confirmação
+- `default`: Sempre pede confirmação (padrão)
+- `dontAsk`: Bloqueia execução de ferramentas
+- `plan`: Modo somente leitura
+
+Use `/permissions <mode>` para alterar.
+
+### 🪝 Hooks Engine (7 Eventos)
+Automatize tarefas com hooks em eventos:
+- `PreToolUse`: Antes de qualquer ferramenta
+- `PostToolUse`: Após execução de ferramenta
+- `PostEdit`: Após edições de arquivo
+- `PostSessionStart`: Após carregar sessão
+- `PostSessionEnd`: Antes de encerrar sessão
+- `Notification`: Em notificações
+- `Stop`: Em interrupções
+
+Gerencie com `/hook <action> [arg]`.
+
+### 🔌 MCP Client (4 Transportes)
+Conecte servidores MCP (Model Context Protocol):
+- **stdio**: Processos locais via stdin/stdout
+- **sse**: Server-Sent Events (HTTP)
+- **streamable-http**: HTTP com streaming
+- **in-process**: Módulos Python carregados diretamente
+
+Gerencie com `/mcp <action> [args]`.
+
+### ⚙️ Settings Chain (5 Camadas)
+Configurações hierárquicas:
+1. **Defaults**: Valores padrão no código
+2. **Project**: `.amplicode/settings.json`
+3. **User**: `~/.amplicode/settings.json`
+4. **Session**: Carregado com a sessão
+5. **Command-line**: Na inicialização
+
+Gerencie com `/settings <action> [key] [value]`.
+
+### 🤖 Custom Agents
+Agentes personalizados definidos em arquivos JSON ou Markdown (com frontmatter YAML):
+- Salve em `~/.amplicode/agents/` (usuário) ou `.amplicode/agents/` (projeto)
+- Liste com `/agents`
+- Carregue com `/agents load`
+
+### 💡 BTW (Brainstorming Twist)
+Injeta contexto sem bloquear o pipeline atual (TDD, Debugging, etc.):
+```
+/btw Lembre-se: a função X deve ser async
+```
+A nota é adicionada ao histórico como mensagem do sistema, sem interromper fluxos em andamento.
 
 ## Instalação
 
@@ -70,65 +127,95 @@ amplicode
    - **NVIDIA API Key**: Seu `nvapi-...`
    - **Model ID**: Ex: `nvidia/llama-3.1-8b-instruct`
 
-## Comandos Principais
+## Comandos Principais (39 Total)
 
+### Básicos
 | Comando | Descrição |
-|---------|-------------|
+|---------|-----------|
+| `/btw <msg>` | Brainstorming Twist (non-blocking) |
 | `/setup` | Executar wizard de configuração |
 | `/addmodel` | Adicionar novo modelo NVIDIA |
 | `/models` | Listar e selecionar modelos |
+| `/help` | Listar todos os comandos |
+| `/quit` | Sair do AmpliCode |
+
+### Sessões
+| Comando | Descrição |
+|---------|-----------|
 | `/sessions` | Gerenciar sessões salvas |
 | `/save [nome]` | Salvar sessão atual |
 | `/resume <id>` | Retomar sessão salva |
+| `/history` | Ver histórico da sessão |
+| `/clear` | Limpar histórico e contexto |
+
+### Git
+| Comando | Descrição |
+|---------|-----------|
 | `/commit` | Auto-commit Git com IA |
 | `/diff [file]` | Mostrar git diff + análise IA |
 | `/pr [title]` | Criar Pull Request com IA |
-| `/help` | Listar todos os 39 comandos |
-| `/quit` | Sair do AmpliCode |
+| `/branch <name>` | Criar nova branch Git |
+| `/review` | Revisar alterações com IA |
 
-## Novidades da v1.0.0
+### Arquivos e Edição
+| Comando | Descrição |
+|---------|-----------|
+| `/readfile <path>` | Adicionar arquivo ao contexto |
+| `/bash <cmd>` | Executar comando bash |
+| `/tokens` | Mostrar uso de tokens |
+| `/cost` | Mostrar custo da sessão |
+| `/compact` | Compactar janela de contexto |
 
-### 🚀 Argumentos de Linha de Comando
-Agora o AmpliCode aceita argumentos na inicialização:
+### Superpowers & Extensões
+| Comando | Descrição |
+|---------|-----------|
+| `/skills` | Listar skills Superpowers |
+| `/brainstorming` | Iniciar brainstorming |
+| `/test-driven-development` | TDD workflow |
+| `/systematic-debugging` | Debug sistemático |
+| `/agents` | Listar agentes customizados |
 
-```bash
-# Mapeia diretório atual como contexto de trabalho
-amplicode .
+### Sistema
+| Comando | Descrição |
+|---------|-----------|
+| `/permissions <mode>` | Alterar modo de permissão |
+| `/hook <action>` | Gerenciar hooks |
+| `/mcp <action>` | Gerenciar servidores MCP |
+| `/settings <action>` | Gerenciar configurações |
+| `/status` | Mostrar status atual |
 
-# Mapeia diretório específico
-amplicode /caminho/para/projeto
+## Arquitetura
 
-# Mostra ajuda
-amplicode --help
-
-# Mostra versão
-amplicode --version
 ```
-
-### ⚡ Otimização Core 2 Duo (ANSI Fluido)
-- Streaming direto via `sys.stdout.write()` + `flush()` (zero buffer)
-- Cabeçalho renderizado em uma única operação de escrita
-- Mensagens com bordas ANSI pré-processadas (mínimo de syscalls)
-- Sem threads para UI, sem Rich Live (economia de CPU e memória)
-
-### 📂 Mapeamento de Contexto
-Quando iniciado com `amplicode .`, o diretório atual é mapeado como contexto de trabalho, permitindo que o AmpliCode acesse arquivos locais mais rápido para análise de código.
+ia_terminal.py (~2700 linhas, arquivo único)
+├── Config Manager (load/save/validate config)
+├── ANSI Terminal UI (direct stdout, no GPU)
+├── NVIDIA API Client (streaming + error handling)
+├── Session Persistence (save/resume/list)
+├── Permission System (6 modos)
+├── Hooks Engine (7 eventos)
+├── MCP Client (4 transportes)
+├── Settings Chain (5 camadas)
+├── Custom Agents (JSON/Markdown)
+├── Superpowers Skills (frozen snapshot)
+├── Git Operations (commit/diff/pr/branch)
+├── Command Handler (39 commands)
+└── Main Loop (REPL)
+```
 
 ## Recursos de IA
 
 ### Ferramentas de Edição (Superpowers)
-O AmpliCode agora possui capacidade de **ler, escrever e editar arquivos** no diretório de trabalho:
+O AmpliCode possui capacidade de **ler, escrever e editar arquivos** no diretório de trabalho:
 
 **Comandos de Arquivo:**
 - **Write File**: IA pode criar/sobrescrever arquivos
-- **Patch File**: Edição cirúrgica (substitui trecho específico, evita reescrever arquivo inteiro)
+- **Patch File**: Edição cirúrgica (substitui trecho específico)
 - **Read File**: Lê arquivo específico sob demanda (contexto dinâmico)
 
 **Segurança:**
 - Sempre que a IA tentar escrever/patchar um arquivo, o terminal exibe: *"Deseja aplicar esta alteração? (s/n)"*
 - O usuário tem controle total sobre o que é modificado
-
-### Session Persistence
 
 ### Session Persistence
 O AmpliCode permite salvar e retomar sessões completas:
@@ -174,20 +261,6 @@ Integração nativa com Git para desenvolvedores:
 /branch feature-nova
 ```
 
-## Arquitetura
-
-```
-ia_terminal.py (~2000 linhas, arquivo único)
-├── Config Manager (load/save/validate config)
-├── ANSI Terminal UI (direct stdout, no GPU)
-├── NVIDIA API Client (streaming + error handling)
-├── Session Persistence (save/resume/list)
-├── Superpowers Skills (frozen snapshot)
-├── Git Operations (commit/diff/pr/branch)
-├── Command Handler (39 commands)
-└── Main Loop (REPL)
-```
-
 ## Compatibilidade
 
 - **Sistema Operacional**: Linux (testado no Ubuntu 22.04)
@@ -206,5 +279,5 @@ O AmpliCode nasce sob o **Ethos de Negócio da AmpliGroup**: independência abso
 
 ---
 
-**AmpliCode v1.0.0** — *IA Oficial da AmpliDEV*  
+**AmpliCode v2.0.0** — *IA Oficial da AmpliDEV*  
 Desenvolvido com 🧡 pela Divisão de Software da AmpliGroup

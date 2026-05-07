@@ -131,6 +131,647 @@ def run_terminal_command(command):
     except Exception as e:
         return False, f"Erro ao executar: {e}"
 
+# ==================== PERMISSION SYSTEM ====================
+
+# Permission modes
+PERMISSION_MODES = ['bypass', 'acceptEdits', 'auto', 'default', 'dontAsk', 'plan']
+PERMISSION_MODE = 'default'  # Can be changed via /permissions command
+TOOL_ALLOW_LIST = set()  # Tools auto-approved
+TOOL_DENY_LIST = set()   # Tools always denied
+
+def check_tool_permission(tool_name, tool_input=None):
+    """
+    Check if tool can be executed based on permission mode.
+    Returns (allowed: bool, reason: str).
+    """
+    if PERMISSION_MODE == 'bypass':
+        return True, None  # All tools auto-approved
+
+    if PERMISSION_MODE == 'plan':
+        # Read-only: deny mutations
+        if tool_name in ['write_file', 'patch_file', 'bash', 'run_terminal_command']:
+            return False, "Read-only mode (plan)"
+        return True, None
+
+    if tool_name in TOOL_DENY_LIST:
+        return False, f"Tool '{tool_name}' is in deny list"
+
+    if tool_name in TOOL_ALLOW_LIST:
+        return True, None
+
+    if PERMISSION_MODE == 'acceptEdits':
+        if tool_name in ['write_file', 'patch_file']:
+            return True, None  # Auto-approve edits
+        # Fall through to user prompt
+
+    if PERMISSION_MODE == 'auto':
+        # Known-safe tools auto-approved
+        if tool_name in ['read_file', 'list_sessions', 'show_history', 'ls', 'glob', 'grep']:
+            return True, None
+        # Fall through to user prompt
+
+    if PERMISSION_MODE == 'dontAsk':
+        return False, "Tool execution denied (dontAsk mode)"
+
+    # mode == 'default' or fallthrough: ask user
+    console.print()
+    console.print(f"[yellow]Ferramenta '{tool_name}' quer executar:[/yellow]")
+    if tool_input:
+        preview = str(tool_input)[:200]
+        console.print(f"[dim]{preview}[/dim]")
+
+    response = Prompt.ask("Permitir? (s/n/a=always/d=deny always)", default='s')
+
+    if response.lower() == 'a':
+        TOOL_ALLOW_LIST.add(tool_name)
+        return True, None
+    elif response.lower() == 'd':
+        TOOL_DENY_LIST.add(tool_name)
+        return False, f"Tool '{tool_name}' added to deny list"
+    elif response.lower() == 's':
+        return True, None
+    else:
+        return False, "User denied"
+
+def cmd_permissions(mode=None):
+    """Handle /permissions command"""
+    global PERMISSION_MODE
+
+    if not mode:
+        console.print(f"[dim]Modo atual: {PERMISSION_MODE}[/dim]")
+        console.print(f"[dim]Allow list: {TOOL_ALLOW_LIST}[/dim]")
+        console.print(f"[dim]Deny list: {TOOL_DENY_LIST}[/dim]")
+        return
+
+    if mode in PERMISSION_MODES:
+        PERMISSION_MODE = mode
+        console.print(f"[green]✓ Modo alterado para: {mode}[/green]")
+    elif mode.startswith('allow '):
+        tool = mode[6:].strip()
+        TOOL_ALLOW_LIST.add(tool)
+        console.print(f"[green]✓ '{tool}' adicionado à allow list[/green]")
+    elif mode.startswith('deny '):
+        tool = mode[5:].strip()
+        TOOL_DENY_LIST.add(tool)
+        console.print(f"[green]✓ '{tool}' adicionado à deny list[/green]")
+    else:
+        console.print(f"[red]Modo inválido. Use: {', '.join(PERMISSION_MODES)}[/red]")
+
+# ==================== HOOKS ENGINE ====================
+HOOKS = {
+    'PreToolUse': [],      # Before any tool execution
+    'PostToolUse': [],     # After tool execution
+    'PostEdit': [],       # After file edits
+    'PostSessionStart': [], # After session loads
+    'PostSessionEnd': [],  # Before session ends
+    'Notification': [],    # On notifications
+    'Stop': []            # On stop/interrupt
+}
+
+def register_hook(event, func):
+    """Register a hook function for an event"""
+    if event in HOOKS:
+        HOOKS[event].append(func)
+        console.print(f"[dim]Hook registered: {event}[/dim]")
+
+def run_hooks(event, **kwargs):
+    """Execute all hooks for an event"""
+    if event not in HOOKS:
+        return
+    for hook in HOOKS[event]:
+        try:
+            hook(**kwargs)
+        except Exception as e:
+            console.print(f"[yellow]Hook error ({event}): {e}[/yellow]")
+
+def cmd_hooks(action=None, event=None):
+    """Manage hooks: list, run, clear"""
+    if not action:
+        console.print("[dim]Events disponíveis:[/dim]")
+        for evt in HOOKS:
+            console.print(f"  {evt}: {len(HOOKS[evt])} hooks")
+        return
+
+    if action == "list":
+        if event and event in HOOKS:
+            console.print(f"[dim]Hooks para {event}:[/dim]")
+            for h in HOOKS[event]:
+                console.print(f"  {h.__name__}")
+        else:
+            for evt, hooks in HOOKS.items():
+                console.print(f"[dim]{evt}:[/dim] {len(hooks)} hooks")
+    elif action == "clear":
+        if event:
+            HOOKS[event] = []
+            console.print(f"[green]✓ Hooks limpos para {event}[/green]")
+        else:
+            for evt in HOOKS:
+                HOOKS[evt] = []
+            console.print("[green]✓ Todos os hooks limpos[/green]")
+
+# ==================== MCP CLIENT ====================
+MCP_SERVERS = {}  # name -> config
+MCP_TOOLS = {}    # server -> tools mapping
+
+def mcp_add_server(name, command_or_url, transport='stdio', env=None):
+    """Add an MCP server"""
+    config = {
+        'transport': transport,
+        'command' if transport == 'stdio' else 'url': command_or_url,
+        'env': env or {}
+    }
+    MCP_SERVERS[name] = config
+    console.print(f"[green]✓ MCP server '{name}' adicionado ({transport})[/green]")
+
+def mcp_remove_server(name):
+    """Remove an MCP server"""
+    if name in MCP_SERVERS:
+        del MCP_SERVERS[name]
+        if name in MCP_TOOLS:
+            del MCP_TOOLS[name]
+        console.print(f"[green]✓ MCP server '{name}' removido[/green]")
+    else:
+        console.print(f"[yellow]Server '{name}' não encontrado[/yellow]")
+
+def mcp_list_servers():
+    """List configured MCP servers"""
+    if not MCP_SERVERS:
+        console.print("[dim]Nenhum MCP server configurado[/dim]")
+        return
+    for name, config in MCP_SERVERS.items():
+        transport = config['transport']
+        target = config.get('command', config.get('url', 'N/A'))
+        console.print(f"[dim]{name}[/dim]: {transport} - {target}")
+
+def mcp_connect_server(name):
+    """Connect to an MCP server and fetch its tools/prompts/resources"""
+    if name not in MCP_SERVERS:
+        console.print(f"[red]Server '{name}' não encontrado[/red]")
+        return False
+
+    config = MCP_SERVERS[name]
+    transport = config['transport']
+
+    try:
+        if transport == 'stdio':
+            # Launch process and communicate via stdio
+            cmd = config['command'].split()
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={**os.environ, **config.get('env', {})}
+            )
+            # TODO: Implement MCP protocol handshake
+            console.print(f"[dim]Conectando via stdio: {cmd}[/dim]")
+            MCP_TOOLS[name] = {'tools': [], 'prompts': [], 'resources': []}
+            return True
+
+        elif transport in ('sse', 'streamable-http'):
+            # HTTP-based transports
+            url = config['url']
+            console.print(f"[dim]Conectando via {transport}: {url}[/dim]")
+            # TODO: Implement HTTP MCP client
+            MCP_TOOLS[name] = {'tools': [], 'prompts': [], 'resources': []}
+            return True
+
+        elif transport == 'in-process':
+            # Python module loaded in-process
+            module = config['command']
+            console.print(f"[dim]Carregando in-process: {module}[/dim]")
+            # TODO: Import and inspect module
+            MCP_TOOLS[name] = {'tools': [], 'prompts': [], 'resources': []}
+            return True
+
+    except Exception as e:
+        console.print(f"[red]Erro conectando '{name}': {e}[/red]")
+        return False
+
+def cmd_mcp(action=None, arg=None):
+    """Manage MCP servers"""
+    if not action:
+        mcp_list_servers()
+        return
+
+    if action == "add":
+        # Parse: /mcp add <name> <transport> <command-or-url>
+        parts = arg.split() if arg else []
+        if len(parts) < 3:
+            console.print("[red]Uso: /mcp add <name> <transport> <command-or-url>[/red]")
+            console.print("[dim]Transports: stdio, sse, streamable-http, in-process[/dim]")
+            return
+        name, transport, target = parts[0], parts[1], ' '.join(parts[2:])
+        mcp_add_server(name, target, transport)
+
+    elif action == "remove" or action == "rm":
+        mcp_remove_server(arg)
+
+    elif action == "connect":
+        if mcp_connect_server(arg):
+            console.print(f"[green]✓ Conectado a '{arg}'[/green]")
+
+    elif action == "list" or action == "ls":
+        mcp_list_servers()
+
+    else:
+        console.print(f"[red]Ação inválida: {action}[/red]")
+        console.print("[dim]Ações: add, remove, connect, list[/dim]")
+
+# ==================== SETTINGS CHAIN ====================
+# 5 layers: defaults < project (.amplicode/settings.json) < user (~/.amplicode/settings.json) < session < command-line
+
+SETTINGS = {
+    'model': None,
+    'temperature': 0.7,
+    'max_tokens': 4096,
+    'stream': True,
+    'auto_commit': False,
+    'permission_mode': 'default',
+    'theme': 'default',
+    'hooks': {},
+    'mcp_servers': {},
+}
+
+def load_settings_file(path):
+    """Load settings from a JSON file"""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        console.print(f"[yellow]Erro lendo {path}: {e}[/yellow]")
+        return {}
+
+def save_settings_file(path, settings):
+    """Save settings to a JSON file"""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            json.dump(settings, f, indent=2)
+        return True
+    except Exception as e:
+        console.print(f"[red]Erro salvando {path}: {e}[/red]")
+        return False
+
+def load_all_settings():
+    """Load settings from all 5 layers"""
+    global SETTINGS
+
+    # Layer 1: Defaults (already in SETTINGS)
+
+    # Layer 2: Project settings
+    project_settings = load_settings_file('.amplicode/settings.json')
+
+    # Layer 3: User settings
+    user_settings = load_settings_file(os.path.expanduser('~/.amplicode/settings.json'))
+
+    # Layer 4: Session settings (loaded elsewhere when session loads)
+
+    # Merge: project < user (user overrides project)
+    merged = {**project_settings, **user_settings}
+
+    # Apply merged settings
+    for key, value in merged.items():
+        if key in SETTINGS:
+            SETTINGS[key] = value
+
+    # Layer 5: Command-line args (applied at startup)
+
+def cmd_settings(action=None, key=None, value=None):
+    """Manage settings across all layers"""
+    if not action:
+        console.print("[dim]Settings atuais:[/dim]")
+        for k, v in SETTINGS.items():
+            console.print(f"  {k}: {v}")
+        return
+
+    if action == "get":
+        if key in SETTINGS:
+            console.print(f"[dim]{key}:[/dim] {SETTINGS[key]}")
+        else:
+            console.print(f"[red]Setting '{key}' não encontrado[/red]")
+
+    elif action == "set":
+        if not key or not value:
+            console.print("[red]Uso: /settings set <key> <value>[/red]")
+            return
+        # Convert value to appropriate type
+        if value.lower() == 'true':
+            value = True
+        elif value.lower() == 'false':
+            value = False
+        elif value.isdigit():
+            value = int(value)
+        elif value.replace('.', '').isdigit():
+            value = float(value)
+
+        SETTINGS[key] = value
+        console.print(f"[green]✓ {key} = {value}[/green]")
+
+        # Save to user settings
+        user_path = os.path.expanduser('~/.amplicode/settings.json')
+        user_settings = load_settings_file(user_path)
+        user_settings[key] = value
+        save_settings_file(user_path, user_settings)
+
+    elif action == "reset":
+        if key:
+            if key in SETTINGS:
+                # Reset to default (would need defaults dict)
+                console.print(f"[yellow]Reset {key} to default[/yellow]")
+        else:
+            console.print("[yellow]Use /settings reset <key>[/yellow]")
+
+    elif action == "layers":
+        console.print("[dim]Layer 1: Defaults (hardcoded)[/dim]")
+        console.print(f"[dim]Layer 2: Project (.amplicode/settings.json)[/dim]")
+        console.print(f"[dim]Layer 3: User (~/.amplicode/settings.json)[/dim]")
+        console.print(f"[dim]Layer 4: Session (loaded with session)[/dim]")
+        console.print(f"[dim]Layer 5: Command-line (at startup)[/dim]")
+
+# ==================== CUSTOM AGENTS ====================
+# Agents defined in JSON or Markdown files
+CUSTOM_AGENTS = {}
+
+AGENTS_DIR = os.path.expanduser('~/.amplicode/agents')
+PROJECT_AGENTS_DIR = '.amplicode/agents'
+
+def load_agent_file(path):
+    """Load an agent from JSON or Markdown file"""
+    if not os.path.exists(path):
+        return None
+
+    try:
+        if path.endswith('.json'):
+            with open(path, 'r') as f:
+                return json.load(f)
+        elif path.endswith('.md'):
+            # Parse Markdown frontmatter
+            with open(path, 'r') as f:
+                content = f.read()
+            # Simple YAML frontmatter parser
+            if content.startswith('---'):
+                end = content.find('---', 3)
+                if end != -1:
+                    import yaml
+                    try:
+                        metadata = yaml.safe_load(content[3:end])
+                        return {**metadata, 'content': content[end+3:], 'type': 'markdown'}
+                    except:
+                        pass
+            return {'content': content, 'type': 'markdown'}
+    except Exception as e:
+        console.print(f"[yellow]Erro carregando agente {path}: {e}[/yellow]")
+    return None
+
+def load_all_agents():
+    """Load all agents from user and project directories"""
+    global CUSTOM_AGENTS
+
+    # Load from user directory
+    if os.path.exists(AGENTS_DIR):
+        for f in os.listdir(AGENTS_DIR):
+            if f.endswith(('.json', '.md')):
+                path = os.path.join(AGENTS_DIR, f)
+                agent = load_agent_file(path)
+                if agent:
+                    name = agent.get('name', f.replace('.json', '').replace('.md', ''))
+                    CUSTOM_AGENTS[name] = agent
+
+    # Load from project directory (overrides user)
+    if os.path.exists(PROJECT_AGENTS_DIR):
+        for f in os.listdir(PROJECT_AGENTS_DIR):
+            if f.endswith(('.json', '.md')):
+                path = os.path.join(PROJECT_AGENTS_DIR, f)
+                agent = load_agent_file(path)
+                if agent:
+                    name = agent.get('name', f.replace('.json', '').replace('.md', ''))
+                    CUSTOM_AGENTS[name] = agent
+
+def get_agent(name):
+    """Get an agent by name"""
+    return CUSTOM_AGENTS.get(name)
+
+def list_agents():
+    """List all available agents"""
+    if not CUSTOM_AGENTS:
+        console.print("[dim]Nenhum agente customizado encontrado[/dim]")
+        return
+    for name, agent in CUSTOM_AGENTS.items():
+        desc = agent.get('description', 'Sem descrição')
+        console.print(f"[dim]{name}[/dim]: {desc}")
+
+def cmd_agents(action=None, name=None):
+    """Manage custom agents"""
+    if not action:
+        list_agents()
+        return
+
+    if action == "list" or action == "ls":
+        list_agents()
+
+    elif action == "load":
+        load_all_agents()
+        console.print(f"[green]✓ {len(CUSTOM_AGENTS)} agentes carregados[/green]")
+
+    elif action == "show":
+        if not name:
+            console.print("[red]Uso: /agents show <name>[/red]")
+            return
+        agent = get_agent(name)
+        if agent:
+            console.print(f"[bold]{name}[/bold]")
+            console.print(f"[dim]{agent.get('description', '')}[/dim]")
+            if 'content' in agent:
+                console.print(agent['content'][:500])
+        else:
+            console.print(f"[yellow]Agente '{name}' não encontrado[/yellow]")
+
+    elif action == "add":
+        console.print("[yellow]Para adicionar agentes, crie arquivos em ~/.amplicode/agents/[/yellow]")
+        console.print("[dim]Formatos: JSON ou Markdown com frontmatter[/dim]")
+
+def cmd_bash(arg):
+    """Execute bash command with permission check"""
+    if not arg:
+        arg = Prompt.ask("[bold]Comando bash[/bold]")
+    if not arg:
+        return
+
+    allowed, reason = check_tool_permission('bash', arg)
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    try:
+        result = subprocess.run(
+            arg, shell=True, capture_output=True, text=True, timeout=30
+        )
+        if result.stdout:
+            console.print(result.stdout)
+        if result.stderr:
+            console.print(f"[red]{result.stderr}[/red]")
+    except subprocess.TimeoutExpired:
+        console.print("[red]Comando excedeu tempo limite (30s).[/red]")
+    except Exception as e:
+        console.print(f"[red]Erro: {e}[/red]")
+
+def cmd_read(path=None, offset=0, limit=2000):
+    """Read file with line numbers (like Claude Code's Read tool)"""
+    if not path:
+        path = Prompt.ask("[bold]Caminho do arquivo[/bold]")
+    if not path:
+        return
+
+    allowed, reason = check_tool_permission('read_file', path)
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    if not os.path.exists(path):
+        console.print(f"[red]Arquivo '{path}' não encontrado.[/red]")
+        return
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+
+        total_lines = len(lines)
+        start = max(0, offset)
+        end = min(total_lines, start + limit)
+
+        console.print(f"[dim]{path} ({total_lines} linhas)[/dim]")
+        for i in range(start, end):
+            console.print(f"[dim]{i+1:>4}:[/dim] {lines[i].rstrip()}")
+
+        if end < total_lines:
+            console.print(f"[dim]... mais {total_lines - end} linhas[/dim]")
+    except IOError as e:
+        console.print(f"[red]Erro ao ler: {e}[/red]")
+
+def cmd_edit(path, old_text, new_text):
+    """Edit file (replaces old_text with new_text)"""
+    allowed, reason = check_tool_permission('edit', (path, old_text))
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    if not old_text or not new_text:
+        console.print("[red]Uso: /edit <path> <old_text> <new_text>[/red]")
+        return
+
+    sucesso, msg = patch_file(path, old_text, new_text)
+    if sucesso:
+        console.print(f"[green]✓ {msg}[/green]")
+    else:
+        console.print(f"[red]{msg}[/red]")
+
+def cmd_glob(pattern, path=None):
+    """Pattern matching for files (like Claude Code's Glob tool)"""
+    allowed, reason = check_tool_permission('glob', pattern)
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    import glob as glob_module
+    search_path = path or '.'
+    matches = glob_module.glob(os.path.join(search_path, pattern), recursive=True)
+    if matches:
+        console.print(f"[dim]{len(matches)} arquivos encontrados:[/dim]")
+        for match in matches[:50]:  # Limit to 50
+            console.print(f"  {match}")
+        if len(matches) > 50:
+            console.print(f"[dim]... mais {len(matches) - 50} arquivos[/dim]")
+    else:
+        console.print("[yellow]Nenhum arquivo encontrado.[/yellow]")
+
+def cmd_grep(pattern, path=None, case_sensitive=False):
+    """Pattern matching in file contents (like Claude Code's Grep tool)"""
+    allowed, reason = check_tool_permission('grep', pattern)
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    import re
+    flags = re.IGNORECASE if i else 0
+    search_path = path or '.'
+
+    results = []
+    for root, dirs, files in os.walk(search_path):
+        # Skip ignored dirs
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+        for file in files:
+            file_path = os.path.join(root, file)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for i, line in enumerate(f, 1):
+                        if re.search(pattern, line, flags):
+                            results.append((file_path, i, line.rstrip()))
+            except:
+                continue
+
+    if results:
+        console.print(f"[dim]{len(results)} ocorrências encontradas:[/dim]")
+        for file_path, line_num, line in results[:30]:  # Limit to 30
+            console.print(f"[dim]{file_path}:{line_num}:[/dim] {line[:100]}")
+        if len(results) > 30:
+            console.print(f"[dim]... mais {len(results) - 30} resultados[/dim]")
+    else:
+        console.print("[yellow]Nenhum resultado encontrado.[/yellow]")
+
+def cmd_ls(path=None):
+    """List directory contents (like Claude Code's LS tool)"""
+    allowed, reason = check_tool_permission('ls', path)
+    if not allowed:
+        console.print(f"[yellow]{reason}[/yellow]")
+        return
+
+    target = path or '.'
+    if not os.path.exists(target):
+        console.print(f"[red]Diretório '{target}' não encontrado.[/red]")
+        return
+
+    try:
+        entries = os.listdir(target)
+        dirs = []
+        files = []
+        for entry in entries:
+            full_path = os.path.join(target, entry)
+            if os.path.isdir(full_path):
+                dirs.append(entry + '/')
+            else:
+                files.append(entry)
+
+        console.print(f"[dim]{target}:[/dim]")
+        for d in sorted(dirs):
+            console.print(f"[bold blue]{d}[/bold blue]")
+        for f in sorted(files):
+            console.print(f"  {f}")
+    except IOError as e:
+        console.print(f"[red]Erro: {e}[/red]")
+def cmd_btw(message=None):
+    """
+    Brainstorming Twist: Quick context injection.
+    Adds a note/insight/reminder to the current session history.
+    Without breaking the flow of running plans (TDD, Debugging, etc.).
+    """
+    if not message:
+        message = Prompt.ask("[bold]Mensagem BTW[/bold]")
+    if not message:
+        return
+
+    # Inject as a system message in conversation history
+    note = f"[BTW Note from User]: {message}"
+    conversation_history.append({"role": "system", "content": note})
+
+    console.print(f"[green]✓ Nota BTW adicionada ao histórico[/green]")
+    console.print(f"[dim]{message}[/dim]")
+
+
+
 # ==================== COMMAND LINE ARGS ====================
 WORK_DIR = os.getcwd()  # Default: current directory
 WORK_DIR_CONTEXT = ""  # Will store initial file context
@@ -1462,7 +2103,7 @@ def cmd_help():
     table.add_column(style="white")
 
     commands = [
-        ("/setup", "Configurar/Adicionar modelo", "", ""),
+        ("/btw <msg>", "Brainstorming Twist (non-blocking)", "/setup", "Configurar/Adicionar modelo"),
         ("/addmodel", "Adicionar novo modelo NVIDIA", "/models", "Listar/Selecionar modelos"),
         ("/sessions", "Gerenciar sessões salvas", "/save [nome]", "Salvar sessão atual"),
         ("/resume <id>", "Retomar sessão salva", "/history", "Ver histórico da sessão"),
@@ -1471,13 +2112,13 @@ def cmd_help():
         ("/compact", "Compactar janela de contexto", "/status", "Mostrar status atual"),
         ("/commit", "Auto-commit Git com IA", "/diff [file]", "Mostrar git diff + IA"),
         ("/branch <name>", "Criar nova branch Git", "/pr [title]", "Criar Pull Request"),
-        ("/review", "Revisar alterações (IA)", "", ""),
-        ("/undo", "Desfazer última edição", "/redo", "Refazer edição"),
-        ("/bash <cmd>", "Executar comando bash", "/search <query>", "Busca web"),
-        ("/fetch <url>", "Buscar conteúdo de URL", "/todo", "Gerenciar lista de tarefas"),
-        ("/agents", "Listar/Managar agentes", "/skills", "Listar skills Superpowers"),
-        ("/hook", "Gerenciar eventos hook", "/permissions", "Modo de permissão"),
-        ("/sandbox", "Ativar/Desativar sandbox", "/mcp", "Gerenciar servidores MCP"),
+        ("/review", "Revisar alterações (IA)", "/undo", "Desfazer última edição"),
+        ("/redo", "Refazer edição", "/bash <cmd>", "Executar comando bash"),
+        ("/search <query>", "Busca web", "/fetch <url>", "Buscar conteúdo de URL"),
+        ("/todo", "Gerenciar lista de tarefas", "/agents", "Listar/Managar agentes"),
+        ("/skills", "Listar skills Superpowers", "/hook <action>", "Gerenciar eventos hook"),
+        ("/permissions <mode>", "Modo de permissão", "/sandbox", "Ativar/Desativar sandbox"),
+        ("/mcp <action>", "Gerenciar servidores MCP", "/settings <action>", "Gerenciar configurações"),
         ("/telemetry", "Ativar/Desativar telemetria", "/theme", "Mudar tema de cores"),
         ("/export", "Exportar conversa", "/import", "Importar conversa"),
         ("/reset", "Resetar configurações", "/version", f"Versão atual: {AMPLI_VERSION}"),
@@ -1609,9 +2250,9 @@ def cmd_agents():
     """Placeholder para agents"""
     console.print("[yellow]Custom Agents: funcionalidade em desenvolvimento.[/yellow]")
 
-def cmd_hook():
-    """Placeholder para hooks"""
-    console.print("[yellow]Hook Events: funcionalidade em desenvolvimento.[/yellow]")
+def cmd_hook(action=None, arg=None):
+    """Hook management (delegates to cmd_hooks)"""
+    cmd_hooks(action, arg)
 
 def cmd_permissions():
     """Placeholder para permissions"""
@@ -1621,9 +2262,9 @@ def cmd_sandbox():
     """Placeholder para sandbox"""
     console.print("[yellow]Sandbox Mode: funcionalidade em desenvolvimento.[/yellow]")
 
-def cmd_mcp():
-    """Placeholder para MCP"""
-    console.print("[yellow]MCP Servers: funcionalidade em desenvolvimento.[/yellow]")
+def cmd_mcp(action=None, arg=None):
+    """MCP management (delegates to cmd_mcp)"""
+    cmd_mcp(action, arg)
 
 def cmd_telemetry():
     """Placeholder para telemetry"""
@@ -1712,7 +2353,9 @@ def process_command(input_text):
         return
 
     # Comandos principais
-    if cmd == "setup":
+    if cmd == "btw":
+        cmd_btw(arg)
+    elif cmd == "setup":
         cmd_setup()
     elif cmd == "addmodel":
         cmd_addmodel()
@@ -1774,21 +2417,49 @@ def process_command(input_text):
     elif cmd == "todo":
         cmd_todo()
     elif cmd == "agents":
-        cmd_agents()
+        cmd_agents(arg)
     elif cmd == "skills":
         list_skills()
     elif cmd == "hook":
-        cmd_hook()
+        # Parse: /hook <action> [arg]
+        hook_arg = None
+        if arg:
+            parts = arg.split(maxsplit=1)
+            hook_action = parts[0]
+            hook_arg = parts[1] if len(parts) > 1 else None
+        else:
+            hook_action = None
+        cmd_hook(hook_action, hook_arg)
     elif cmd == "permissions":
-        cmd_permissions()
+        cmd_permissions(arg)
     elif cmd == "sandbox":
         cmd_sandbox()
     elif cmd == "mcp":
-        cmd_mcp()
+        # Parse: /mcp <action> [arg]
+        mcp_arg = None
+        if arg:
+            parts = arg.split(maxsplit=1)
+            mcp_action = parts[0]
+            mcp_arg = parts[1] if len(parts) > 1 else None
+        else:
+            mcp_action = None
+        cmd_mcp(mcp_action, mcp_arg)
     elif cmd == "telemetry":
         cmd_telemetry()
     elif cmd == "theme":
         cmd_theme()
+    elif cmd == "settings":
+        # Parse: /settings <action> [key] [value]
+        if arg:
+            parts = arg.split(maxsplit=2)
+            set_action = parts[0]
+            set_key = parts[1] if len(parts) > 1 else None
+            set_value = parts[2] if len(parts) > 2 else None
+        else:
+            set_action = None
+            set_key = None
+            set_value = None
+        cmd_settings(set_action, set_key, set_value)
     elif cmd == "export":
         cmd_export()
     elif cmd == "import":
